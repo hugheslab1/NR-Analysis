@@ -1,5 +1,7 @@
 # Hugheslab's Nuclear Receptor Analysis Scripting
 
+**THIS IS A WORK IN PROGRESS. A LOT OF THINGS ARE BROKEN.**
+
 A python framework for doing analysis on Nuclear Receptor protein structures
 
 Python prereqs:
