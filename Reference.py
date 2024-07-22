@@ -21,5 +21,5 @@ for structure in files:
             print(f'Helix 3-12 Charge Clamp Distance:\n{h3_h12ccDist} Angstroms\n')
         
             # Ligand H-Bonding
-            candidates=detectLigandBonding(current_chain,current_chain.ligands[0])
+            candidates=current_chain.detectHydrogenBonding(current_chain.ligands[0])
             print(f'H-Bonding Candidates:\n{candidates}\n')

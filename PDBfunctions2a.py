@@ -1,23 +1,19 @@
 import os
-import xml.etree.ElementTree as ET
 import math
-from urllib.request import urlretrieve
 import urllib.request
-import Bio.PDB
-import Bio.PDB.Residue
 from alive_progress import alive_it
 import shutil
 import PDBf_ref_tools as pdbftk
 import gzip
 import numpy as np
-import Bio.Align
 from Bio.PDB import MMCIFParser
+from Bio.PDB import PDBParser
 import Bio.PDB.Chain
 import Bio.PDB.Residue
-import Bio.PDB.Atom
+import Bio.Align
+import networkx as nx
+import periodictable as ptable
 wdir=os.getcwd()+'/'
-
-
 
 
 class structureFile:
@@ -28,115 +24,28 @@ class structureFile:
         self.pdbEntryID=None
         self.species=None
         self.chains:dict[str,chain]={}
-        #self.ligands={}
         self.hbondCandidates=[]
         self.name=''.join(path.split('/')[-1].split('.')[:-1])
     
-        acceptedModes=['cif','mmcif','pdbx','pdb','xml']
+        acceptedModes=['cif','mmcif','pdbx','pdb']
         fileExt=path.split('.')[len(path.split('.'))-1]
         fileName=path.split('/')[len(path.split('/'))-1]
         mode=''
         def readPDB():
-            file=open(path,'r')
-            title=''
-            for line in file:
-                
-                recName=line[0:6].strip()
-                if recName == 'ATOM':
-                    if len(line) > 80:
-                        if len(line) > 82:
-                            raise ValueError('"'+fileName+'" cannot be parsed: contains ATOM lines longer than 80 col. wide.')
-                        line=line[:28]+line[29:]
-                        
-
-                    serial=line[6:11].strip()
-                    name=line[12:16].strip()
-                    altLoc=line[16].strip()
-                    resName=line[17:20].strip()
-                    chainID=line[21].strip()
-                    resSeq=line[22:26].strip()
-                    iCode=line[26].strip()
-                    x=line[30:38].strip()
-                    y=line[38:46].strip()
-                    z=line[46:54].strip()
-                    occupancy=line[54:60].strip()
-                    tempFactor=line[60:66].strip()
-                    element=line[76:78].strip()
-                    charge=line[78:80].strip()
-                    thisLine=atom(serial,name,altLoc,resName,chainID,resSeq,iCode,x,y,z,occupancy,tempFactor,element,charge)
-
-
-                    if not chainID in self.chains:
-                        self.chains[chainID]=chain(chainID)
-                        currentChain=self.chains[chainID]
-                        currentChain.residues.append(residue(resSeq, resName))
-                        currentResidue=currentChain.residues[-1]
-
-                    if resSeq != currentChain.residues[-1].id:
-                        currentChain.residues.append(residue(resSeq, resName))
-                        currentResidue=currentChain.residues[-1]
-                    #currentChain.atoms.append(thisLine)
-                    #currentChain.raw_lines.append(line)
-                    currentResidue.atoms[name]=thisLine
-                elif recName =='TITLE':
-                    title+=line[10:80]
-        def readCif():
-
-            parser=MMCIFParser(QUIET=True)
-
+            parser=PDBParser(QUIET=True)
             structure=parser.get_structure(self.filePath.split('/')[-1],self.filePath)
-
             for model in structure:
                 for bio_chain in model:
                     chainIndex=bio_chain.id
                     self.chains[chainIndex] = chain(bio_chain.id,bio_chain)
-                    #print(f"Processing chain {bio_chain.id}")
+        def readCif():
+            parser=MMCIFParser(QUIET=True)
+            structure=parser.get_structure(self.filePath.split('/')[-1],self.filePath)
+            for model in structure:
+                for bio_chain in model:
+                    chainIndex=bio_chain.id
+                    self.chains[chainIndex] = chain(bio_chain.id,bio_chain)
 
-  
-        
-        def readXML():
-            tree=ET.parse(path)
-            root=tree.getroot()
-            #print (root.attrib)
-            tagbase='{http://pdbml.pdb.org/schema/pdbx-v50.xsd}'
-            atomLib={
-                'label_atom_id':None,       #name
-                'label_alt_id':None,        #altLoc
-                'label_comp_id':None,       #resName
-                'auth_asym_id':None,        #chainID
-                'auth_seq_id':None,         #resSeq
-                'pdbx_PDB_ins_code':None,   #iCode
-                'Cartn_x':None,             #x
-                'Cartn_y':None,             #y
-                'Cartn_z':None,             #z
-                'occupancy':None,           #occupancy
-                'B_iso_or_equiv':None,      #tempFactor
-                'type_symbol':None,         #element
-                'charge':''
-                
-            }
-            for dataBlock in root:
-                
-                if dataBlock.tag == tagbase+"atom_siteCategory":
-                    atoms=dataBlock
-                    for entry in atoms:
-                        for item in entry:
-                            tag=item.tag[len(tagbase):]
-                            atomLib[tag]=item.text
-                        thisLine=atom(entry.attrib['id'],atomLib['label_atom_id'],atomLib['label_alt_id'],atomLib['label_comp_id'],atomLib['auth_asym_id'],atomLib['auth_seq_id'],atomLib['pdbx_PDB_ins_code'],atomLib['Cartn_x'],atomLib['Cartn_y'],atomLib['Cartn_z'],atomLib['occupancy'],atomLib['B_iso_or_equiv'],atomLib['type_symbol'],atomLib['charge'])
-
-                        if not atomLib['auth_asym_id'] in self.chains:
-                            self.chains[atomLib['auth_asym_id']] = chain(atomLib['auth_asym_id'])
-                            currentChain=self.chains[atomLib['auth_asym_id']]
-                            currentChain.residues.append(residue(atomLib['auth_seq_id'],atomLib['label_comp_id']))
-                            currentResidue=currentChain.residues[-1]
-                        
-                        if atomLib['auth_seq_id'] != currentChain.residues[-1].id:
-                            currentChain.residues.append(residue(atomLib['auth_seq_id'],atomLib['label_comp_id']))
-                            currentResidue=currentChain.residues[-1]
-                        #currentChain.atoms.append(thisLine)
-                        #currentChain.raw_lines.append(entry)
-                        currentResidue.atoms[atomLib['label_atom_id']]=thisLine
         if fileExt not in acceptedModes:
             raise ValueError('"'+path+'" is not a supported coordinate file type. Supported formats: '+str(acceptedModes).strip('[]'))
         else:
@@ -147,9 +56,6 @@ class structureFile:
             elif modeIndex == 3:
                 mode='legacy'
                 readPDB()
-            elif modeIndex == 4:
-                mode='xml'
-                readXML()
 
 
 
@@ -158,7 +64,8 @@ class ligand():
     def __init__(self,rawData:Bio.PDB.Residue.Residue):
         self.name:str=rawData.resname
         self.atoms:dict[str,atom] = {}
-        pi_sites=[]
+        self.atomlist:list[atom] = []
+        self.__pi_sites=[]
         for bio_atom in rawData:
             atom_obj = atom(
             bio_atom.serial_number, bio_atom.name, bio_atom.altloc,
@@ -168,6 +75,50 @@ class ligand():
             bio_atom.element, str(bio_atom.get_charge())
             )
             self.atoms[bio_atom.id] = atom_obj
+            self.atomlist.append(atom_obj)
+
+    def planar(self, ring, tolerance=0.1) -> bool:
+        if len(ring) < 3:
+            return False
+        
+        coords = np.array([[self.atoms[atom_name].x, self.atoms[atom_name].y, self.atoms[atom_name].z] for atom_name in ring])
+
+        v1 = coords[1] - coords[0]
+        v2 = coords[2] - coords[1]
+        
+        normal = np.cross(v1,v2)
+        normal = normal/np.linalg.norm(normal)
+
+        distances = np.dot(coords-coords[0], normal)
+
+        return np.all(np.abs(distances) < tolerance)
+
+    def find_rings(self, size:int):
+        G = nx.Graph()
+        for atom in self.atomlist:
+            G.add_node(atom.name, element=atom.element)
+        for i, atom1 in enumerate(self.atomlist):
+            for j, atom2 in enumerate(self.atomlist):
+                if i < j and atomDist(atom1, atom2) <= 1.6:
+                    G.add_edge(atom1.name, atom2.name)
+        
+        cycles=nx.cycle_basis(G)
+        for cycle in cycles:
+            if self.planar(cycle) and len(cycle) == size:
+                self.__pi_sites.append(cycle)
+                
+                coords = np.array([[self.atoms[atom_name].x, self.atoms[atom_name].y, self.atoms[atom_name].z] for atom_name in cycle])
+                weights = np.array([self.atoms[atom_id].weight for atom_id in cycle])
+                
+                weighted_coords = coords * weights[:, np.newaxis]
+                centroid = np.sum(weighted_coords, axis=0) / np.sum(weights)
+
+
+
+        return self.__pi_sites
+    
+
+    
 
 
 class atom():
@@ -186,6 +137,7 @@ class atom():
         self.tempFactor=float(tempFactor)
         self.element=element
         self.charge=charge
+        self.weight:float = ptable.mass.mass(ptable.elements.isotope(element))
     
 
 
@@ -206,13 +158,11 @@ class residue():
             self.atoms[bio_atom.id] = atom_obj
             
 
-
-
 class chain():
     def __init__(self,name:str,rawData:Bio.PDB.Chain.Chain):
         self.name=name
         self.residues: list[residue] = []
-        self.ligands: list[residue] = []
+        self.ligands: list[ligand] = []
         self.waters: list[residue] = []
         self.__aminosequence=None
         self.distances={}
@@ -231,9 +181,7 @@ class chain():
             elif bio_residue.resname != 'HOH':
                 self.ligands.append(ligand(bio_residue))
                 
-
-
-    
+        
     def seq(self) -> str:
         
         self.__aminosequence = ''
@@ -354,6 +302,45 @@ class chain():
                 self.__bindingSurface = pdbftk.heronArea(a,b,c)
 
             return self.__bindingSurface
+        
+    def detectHydrogenBonding (self, ligand:ligand, chainRange=-1) -> dict[str,dict[str,any]]:
+    
+        acceptorAtoms=['N','O','F','S','Se','Cl']
+        maxBondDist=3.5
+        angleTolerance= 96.0 # In degrees: for all angles which I measured incorrectly + bonding strength
+        donors=pdbftk.hBondDonors
+        refCarbons=pdbftk.refCarbons
+        aproxAngles=pdbftk.aproxAngles
+        hbondCandidates={}
+
+
+        for res in self.residues:
+            for atom in res.atoms:
+                if res.atoms[atom].name in donors[pdbftk.AminoacidDict[res.type]]:
+                    chainatom=res.atoms[atom]
+                    if not chainatom.name in refCarbons[pdbftk.AminoacidDict[chainatom.resName]]:
+                        continue
+                    for atom1 in ligand.atoms:
+                        if ligand.atoms[atom1].element in acceptorAtoms:
+                            ligatom=ligand.atoms[atom1]
+                            distance=atomDist(chainatom,ligatom)
+                            if distance <= maxBondDist:
+                                refCarbon=res.atoms[refCarbons[pdbftk.AminoacidDict[chainatom.resName]][chainatom.name]]
+                                bondAngle=vectorAngles([refCarbon.x,refCarbon.y,refCarbon.z],[chainatom.x,chainatom.y,chainatom.z],[refCarbon.x,refCarbon.y,refCarbon.z],[ligatom.x,ligatom.y,ligatom.z])
+                                idealAngle=aproxAngles[pdbftk.AminoacidDict[chainatom.resName]][chainatom.name]
+
+                                if(bondAngle >= idealAngle-angleTolerance and bondAngle <= idealAngle+angleTolerance):
+                                    hbondCandidates[str(chainatom.serial)+'|'+str(ligatom.serial)] = {
+                                        'residue':chainatom.resSeq,
+                                        'atoms':(chainatom,ligatom),
+                                        'angle':bondAngle,
+                                        'distance':distance
+                                    }
+
+        return hbondCandidates
+    
+
+    
 
 
 def getPDBs(fileList:list, cachePath=wdir+'pdbCache/', cache=True, dlFrmPDB=True) -> dict[str,str]:
@@ -379,7 +366,7 @@ def getPDBs(fileList:list, cachePath=wdir+'pdbCache/', cache=True, dlFrmPDB=True
             if dlFrmPDB and len(file.split('.')[0]) == 4:
                 try:
                     url='https://files.rcsb.org/download/'+rawFile
-                    urlretrieve(url,cachePath+rawFile)
+                    urllib.request.urlretrieve(url,cachePath+rawFile)
                     if rawFile.endswith('.gz'):
                         gzipped=gzip.open(cachePath+rawFile,'r')
                         unzipped=open(cachePath+file,'w')
@@ -397,8 +384,7 @@ def getPDBs(fileList:list, cachePath=wdir+'pdbCache/', cache=True, dlFrmPDB=True
 
     return filePaths
 
-            
-
+        
 
 def massInit(codeList:list,extArg='.cif',archivePath=wdir+'pdbCache/',loadingBar=True) -> dict[str,structureFile]:
     filenameList=[]
@@ -448,41 +434,7 @@ def vectorAngles(p1:list,p2:list,q1:list,q2:list) -> float:
     return(np.degrees(theta))
 
 
-def detectLigandBonding (chain:chain, ligand:ligand, chainRange=-1) -> dict[str,dict[str,any]]:
-    
-    acceptorAtoms=['N','O','F','S','Se','Cl']
-    maxBondDist=3.5
-    angleTolerance= 96.0 # In degrees: for all angles which I measured incorrectly + bonding strength
-    donors=pdbftk.hBondDonors
-    refCarbons=pdbftk.refCarbons
-    aproxAngles=pdbftk.aproxAngles
-    hbondCandidates={}
 
-
-    for res in chain.residues:
-        for atom in res.atoms:
-            if res.atoms[atom].name in donors[pdbftk.AminoacidDict[res.type]]:
-                chainatom=res.atoms[atom]
-                if not chainatom.name in refCarbons[pdbftk.AminoacidDict[chainatom.resName]]:
-                    continue
-                for atom1 in ligand.atoms:
-                    if ligand.atoms[atom1].element in acceptorAtoms:
-                        ligatom=ligand.atoms[atom1]
-                        distance=atomDist(chainatom,ligatom)
-                        if distance <= maxBondDist:
-                            refCarbon=res.atoms[refCarbons[pdbftk.AminoacidDict[chainatom.resName]][chainatom.name]]
-                            bondAngle=vectorAngles([refCarbon.x,refCarbon.y,refCarbon.z],[chainatom.x,chainatom.y,chainatom.z],[refCarbon.x,refCarbon.y,refCarbon.z],[ligatom.x,ligatom.y,ligatom.z])
-                            idealAngle=aproxAngles[pdbftk.AminoacidDict[chainatom.resName]][chainatom.name]
-
-                            if(bondAngle >= idealAngle-angleTolerance and bondAngle <= idealAngle+angleTolerance):
-                                hbondCandidates[str(chainatom.serial)+'|'+str(ligatom.serial)] = {
-                                    'residue':chainatom.resSeq,
-                                    'atoms':(chainatom,ligatom),
-                                    'angle':bondAngle,
-                                    'distance':distance
-                                }
-    
-    return hbondCandidates
 
 
 def findResOffset(chain:chain,MissingResCutoff=math.inf) -> int:
@@ -548,3 +500,4 @@ def findResOffset(chain:chain,MissingResCutoff=math.inf) -> int:
     #print(f'Base Offset: {baseOffset}')
     print(f'Final Offset: {-totalOffset}')
     return totalOffset
+

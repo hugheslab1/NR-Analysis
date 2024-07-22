@@ -1,2 +1,2 @@
 #! /bin/bash
-pip install biopython alive_progress numpy
+pip install biopython alive_progress numpy networkx periodictable
