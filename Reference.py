@@ -20,6 +20,7 @@ for structure in files:
             h3_h12ccDist=current_chain.cc_dist(['h3cc','h12cc']) 
             print(f'Helix 3-12 Charge Clamp Distance:\n{h3_h12ccDist} Angstroms\n')
         
-            # Ligand H-Bonding
-            candidates=current_chain.detectHydrogenBonding(current_chain.ligands[0])
-            print(f'H-Bonding Candidates:\n{candidates}\n')
+            # Hydrogen and Pi bonding to a Ligand
+            candidates=current_chain.ligandBonding()
+            print(f'Hydrogen Bonding Candidates:\n{candidates['hydrogen']}\n')
+            print(f'Pi Stacking Candidates:\n{candidates['pi']}\n')

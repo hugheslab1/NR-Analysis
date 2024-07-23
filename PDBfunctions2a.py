@@ -58,14 +58,13 @@ class structureFile:
                 readPDB()
 
 
-
-
 class ligand():
     def __init__(self,rawData:Bio.PDB.Residue.Residue):
         self.name:str=rawData.resname
         self.atoms:dict[str,atom] = {}
         self.atomlist:list[atom] = []
-        self.__pi_sites=[]
+        self.__pi_sites:list = []
+        self.__ran_pi_scan:bool = False
         for bio_atom in rawData:
             atom_obj = atom(
             bio_atom.serial_number, bio_atom.name, bio_atom.altloc,
@@ -93,31 +92,34 @@ class ligand():
 
         return np.all(np.abs(distances) < tolerance)
 
-    def find_rings(self, size:int):
-        G = nx.Graph()
-        for atom in self.atomlist:
-            G.add_node(atom.name, element=atom.element)
-        for i, atom1 in enumerate(self.atomlist):
-            for j, atom2 in enumerate(self.atomlist):
-                if i < j and atomDist(atom1, atom2) <= 1.6:
-                    G.add_edge(atom1.name, atom2.name)
-        
-        cycles=nx.cycle_basis(G)
-        for cycle in cycles:
-            if self.planar(cycle) and len(cycle) == size:
-                self.__pi_sites.append(cycle)
-                
-                coords = np.array([[self.atoms[atom_name].x, self.atoms[atom_name].y, self.atoms[atom_name].z] for atom_name in cycle])
-                weights = np.array([self.atoms[atom_id].weight for atom_id in cycle])
-                
-                weighted_coords = coords * weights[:, np.newaxis]
-                centroid = np.sum(weighted_coords, axis=0) / np.sum(weights)
+    def pi_sites(self) -> list[list[list]]:
+        if not self.__ran_pi_scan:
+            G = nx.Graph()
+            for atom in self.atomlist:
+                G.add_node(atom.name, element=atom.element)
+            for i, atom1 in enumerate(self.atomlist):
+                for j, atom2 in enumerate(self.atomlist):
+                    if i < j and atomDist(atom1, atom2) <= 1.6:
+                        G.add_edge(atom1.name, atom2.name)
+
+            cycles=nx.cycle_basis(G)
+            for cycle in cycles:
+                if self.planar(cycle) and len(cycle) in [5,6]:
+                    #self.__pi_sites.append(cycle)
+
+                    coords = np.array([[self.atoms[atom_name].x, self.atoms[atom_name].y, self.atoms[atom_name].z] for atom_name in cycle])
+                    weights = np.array([self.atoms[atom_id].weight for atom_id in cycle])
+
+                    weighted_coords = coords * weights[:, np.newaxis]
+                    np_centroid = np.sum(weighted_coords, axis=0) / np.sum(weights)
+                    centroid=[]
+                    for item in np_centroid:
+                        centroid.append(float(item))
 
 
-
+                    self.__pi_sites.append([centroid,cycle])
+            self.__ran_pi_scan = True
         return self.__pi_sites
-    
-
     
 
 
@@ -135,6 +137,8 @@ class atom():
         self.z=float(z)
         self.occupancy=float(occupancy)
         self.tempFactor=float(tempFactor)
+        if len(element) == 2:
+            element=element[0]+element[1].lower()
         self.element=element
         self.charge=charge
         self.weight:float = ptable.mass.mass(ptable.elements.isotope(element))
@@ -146,7 +150,7 @@ class residue():
         self.id:str=str(rawData.id[1])
         self.type:str=rawData.resname
         self.atoms:dict[str,atom] = {}
-
+        self.pi_centroids:list[list[float]] = None
         for bio_atom in rawData:
             atom_obj = atom(
             bio_atom.serial_number, bio_atom.name, bio_atom.altloc,
@@ -156,6 +160,21 @@ class residue():
             bio_atom.element, str(bio_atom.get_charge())
             )
             self.atoms[bio_atom.id] = atom_obj
+        
+        if self.type in pdbftk.aa_pi_atoms:
+            self.pi_centroids = []
+            for loc in pdbftk.aa_pi_atoms[self.type]:
+                try: coords = np.array([[self.atoms[atom_name].x, self.atoms[atom_name].y, self.atoms[atom_name].z] for atom_name in loc])
+                except: continue
+                weights = np.array([self.atoms[atom_id].weight for atom_id in loc])
+
+                weighted_coords = coords * weights[:, np.newaxis]
+                np_centroid = np.sum(weighted_coords, axis=0) / np.sum(weights)
+                centroid=[]
+                for item in np_centroid:
+                    centroid.append(float(item))
+                
+                self.pi_centroids.append(centroid)
             
 
 class chain():
@@ -172,7 +191,10 @@ class chain():
         self.flags=[]
         self.charge_clamps=['h3cc','h4_1cc','h4_8cc','h12cc']
         self.__regPair=None
-
+        self.__ligand_hydrogen_bonds ={}
+        self.__ligand_pi_interactions = {}
+        self.__got_h_bonds=False
+        self.__got_pi_bonds=False
         
         for bio_residue in rawData:
             if bio_residue.resname in pdbftk.AminoacidDict:
@@ -303,44 +325,77 @@ class chain():
 
             return self.__bindingSurface
         
-    def detectHydrogenBonding (self, ligand:ligand, chainRange=-1) -> dict[str,dict[str,any]]:
+    def detectHydrogenBonding (self, chainRange=-1) -> dict[str,dict[str,any]]:
+        if self.__got_h_bonds == False:
+            acceptorAtoms=['N','O','F','S','Se','Cl']
+            maxBondDist=3.5
+            angleTolerance= 96.0 # In degrees: for all angles which I measured incorrectly + bonding strength
+            donors=pdbftk.hBondDonors
+            refCarbons=pdbftk.refCarbons
+            aproxAngles=pdbftk.aproxAngles
+
+            for res in self.residues:
+                for atom in res.atoms:
+                    if res.atoms[atom].name in donors[pdbftk.AminoacidDict[res.type]]:
+                        chainatom=res.atoms[atom]
+                        if not chainatom.name in refCarbons[pdbftk.AminoacidDict[chainatom.resName]]:
+                            continue
+                        for ligand in self.ligands:
+                            for atom1 in ligand.atoms:
+                                if ligand.atoms[atom1].element in acceptorAtoms:
+                                    ligatom=ligand.atoms[atom1]
+                                    distance=atomDist(chainatom,ligatom)
+                                    if distance <= maxBondDist:
+                                        refCarbon=res.atoms[refCarbons[pdbftk.AminoacidDict[chainatom.resName]][chainatom.name]]
+                                        bondAngle=vectorAngles([refCarbon.x,refCarbon.y,refCarbon.z],[chainatom.x,chainatom.y,chainatom.z],[refCarbon.x,refCarbon.y,refCarbon.z],[ligatom.x,ligatom.y,ligatom.z])
+                                        idealAngle=aproxAngles[pdbftk.AminoacidDict[chainatom.resName]][chainatom.name]
+
+                                        if(bondAngle >= idealAngle-angleTolerance and bondAngle <= idealAngle+angleTolerance):
+                                            self.__ligand_hydrogen_bonds[str(chainatom.serial)+'|'+ligand.name] = {
+                                                'residue':chainatom.resSeq,
+                                                'atoms':(chainatom,ligatom),
+                                                'angle':bondAngle,
+                                                'distance':distance
+                                            }
+            self.__got_h_bonds = True
+
+        return self.__ligand_hydrogen_bonds
     
-        acceptorAtoms=['N','O','F','S','Se','Cl']
-        maxBondDist=3.5
-        angleTolerance= 96.0 # In degrees: for all angles which I measured incorrectly + bonding strength
-        donors=pdbftk.hBondDonors
-        refCarbons=pdbftk.refCarbons
-        aproxAngles=pdbftk.aproxAngles
-        hbondCandidates={}
+    def detectPiInteractions(self): #Needs more tuning (edge-edge filter, offset edge-side filter, in-between filter)
+        if self.__got_pi_bonds == False:
+            for res in self.residues:
+                if res.type in pdbftk.aa_pi_atoms:
+                    for centroid in res.pi_centroids:
+                        for ligand in self.ligands:
+                            for site in ligand.pi_sites():
+                                distance = euclidean_distance(centroid,site[0])
+                                if distance < 6:
+                                    '''
+                                    print(centroid)
+                                    print(site[0])
+                                    angle = vector_angle(fit_plane(centroid), fit_plane(site[0]))
 
-
-        for res in self.residues:
-            for atom in res.atoms:
-                if res.atoms[atom].name in donors[pdbftk.AminoacidDict[res.type]]:
-                    chainatom=res.atoms[atom]
-                    if not chainatom.name in refCarbons[pdbftk.AminoacidDict[chainatom.resName]]:
-                        continue
-                    for atom1 in ligand.atoms:
-                        if ligand.atoms[atom1].element in acceptorAtoms:
-                            ligatom=ligand.atoms[atom1]
-                            distance=atomDist(chainatom,ligatom)
-                            if distance <= maxBondDist:
-                                refCarbon=res.atoms[refCarbons[pdbftk.AminoacidDict[chainatom.resName]][chainatom.name]]
-                                bondAngle=vectorAngles([refCarbon.x,refCarbon.y,refCarbon.z],[chainatom.x,chainatom.y,chainatom.z],[refCarbon.x,refCarbon.y,refCarbon.z],[ligatom.x,ligatom.y,ligatom.z])
-                                idealAngle=aproxAngles[pdbftk.AminoacidDict[chainatom.resName]][chainatom.name]
-
-                                if(bondAngle >= idealAngle-angleTolerance and bondAngle <= idealAngle+angleTolerance):
-                                    hbondCandidates[str(chainatom.serial)+'|'+str(ligatom.serial)] = {
-                                        'residue':chainatom.resSeq,
-                                        'atoms':(chainatom,ligatom),
-                                        'angle':bondAngle,
-                                        'distance':distance
+                                    if angle > 30:
+                                        pi_type = 'Edge|Side'
+                                    else:
+                                        pi_type = 'Side|Side'
+                                    '''
+                                    self.__ligand_pi_interactions[f'{res.id}|{ligand.name}']={
+                                        'residue':res.id,
+                                        'atoms':site[1],
+                                        'distance':distance,
+                                        #'angle':angle,
+                                        #'type':pi_type,
                                     }
-
-        return hbondCandidates
+            self.__got_pi_bonds = True
+        return self.__ligand_pi_interactions
     
 
-    
+    def ligandBonding(self):
+        return{
+        'hydrogen':self.detectHydrogenBonding(),
+        'pi':self.detectPiInteractions()
+        }
 
 
 def getPDBs(fileList:list, cachePath=wdir+'pdbCache/', cache=True, dlFrmPDB=True) -> dict[str,str]:
@@ -434,9 +489,6 @@ def vectorAngles(p1:list,p2:list,q1:list,q2:list) -> float:
     return(np.degrees(theta))
 
 
-
-
-
 def findResOffset(chain:chain,MissingResCutoff=math.inf) -> int:
     try:
         upCode=pdbftk.UP_Codes[chain.type()]
@@ -501,3 +553,30 @@ def findResOffset(chain:chain,MissingResCutoff=math.inf) -> int:
     print(f'Final Offset: {-totalOffset}')
     return totalOffset
 
+def euclidean_distance(point1:list,point2:list):
+    point1 = np.array(point1)
+    point2 = np.array(point2)
+    distance = np.linalg.norm(point1-point2)
+    return float(distance)
+
+def fit_plane(points) -> np.ndarray:
+    points=np.array(points)
+    A = np.c_[points[:, 0], points[:, 1], np.ones(points.shape[0])]
+
+    _, _, Vt = np.linalg.svd(A)
+
+    normal_vector = Vt[-1, :-1]
+
+    return normal_vector
+
+def vector_angle(u:np.ndarray, v:np.ndarray) -> float:
+
+    dot=np.dot(u,v)
+    unorm=np.linalg.norm(u)
+    vnorm=np.linalg.norm(u)
+    
+    cos_theta = dot / (unorm * vnorm)
+    cos_theta = np.clip(cos_theta,-1.0,1.0)
+
+    theta=float(np.arccos(cos_theta))
+    return theta

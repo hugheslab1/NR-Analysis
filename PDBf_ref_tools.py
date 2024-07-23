@@ -423,3 +423,11 @@ LigandNames={
 UP_Codes={
     'FXR':'Q96RI1'
 }
+
+
+aa_pi_atoms={
+    'PHE':[['CG','CD2','CE2','CZ','CE1','CD1']],
+    'TYR':[['CG','CD2','CE2','CZ','CE1','CD1']],
+    'TRP':[['CG','CD2','CE2','NE1','CD1'],['CD2','CE2','CZ2','CH2','CZ3','CE3']],
+    'HIS':[['CG','CD2','NE2','CE1','ND1']]
+}

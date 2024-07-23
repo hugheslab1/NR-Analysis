@@ -14,6 +14,10 @@ Python prereqs:
     - networkx
 
 
+KNOWN ISSUES:
+- Pi Stacking algorithm is too liberal, needs further filtering for accuracy.
+- UP_Codes is incomplete
+
 Code by Clayton Surber, Concept by Zara Hedari
 
-(Updated @17:47 MDT, 07/22/2024)
+(Updated @17:07 MDT, 07/23/2024)
