@@ -15,6 +15,7 @@ for structure in files:
     for Chain in files[structure].chains:
         current_chain=files[structure].chains[Chain]
         if current_chain.family() == 'NR':
+            print(f'{structure}:{Chain}')
             
             # Charge Clamp Distances
             h3_h12ccDist=current_chain.cc_dist(['h3cc','h12cc']) 
@@ -22,5 +23,5 @@ for structure in files:
         
             # Hydrogen and Pi bonding to a Ligand
             candidates=current_chain.ligandBonding()
-            print(f'Hydrogen Bonding Candidates:\n{candidates['hydrogen']}\n')
-            print(f'Pi Stacking Candidates:\n{candidates['pi']}\n')
+            print(f'Hydrogen Bonding Candidates:\n{candidates["hydrogen"]}\n')
+            print(f'Pi Stacking Candidates:\n{candidates["pi"]}\n')
