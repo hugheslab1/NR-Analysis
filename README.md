@@ -15,9 +15,8 @@ Python prereqs:
 
 
 KNOWN ISSUES:
-- Pi Stacking algorithm is too liberal, needs further filtering for accuracy.
 - UP_Codes is incomplete
 
 Code by Clayton Surber, Concept by Zara Hedari
 
-(Updated @17:07 MDT, 07/23/2024)
+(Updated @09:13 MDT, 08/02/2024)
