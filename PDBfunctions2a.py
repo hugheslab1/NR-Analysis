@@ -57,6 +57,22 @@ class structureFile:
                 mode='legacy'
                 readPDB()
 
+        cache = None
+        coregPairs={}
+        for id in self.chains:
+            type = self.chains[id].family()
+            
+            if cache != None:
+                if self.chains[cache].family() != type:
+                    coregPairs[cache] = id
+                    coregPairs[id] = cache
+                elif self.chains[cache].family() == type:
+                    cache = id
+            elif cache == None:
+                cache == id
+        self.coregPairs:dict[str,str] = coregPairs
+            
+
 
 class ligand():
     def __init__(self,rawData:Bio.PDB.Residue.Residue):
@@ -76,7 +92,7 @@ class ligand():
             self.atoms[bio_atom.id] = atom_obj
             self.atomlist.append(atom_obj)
 
-    def planar(self, ring, tolerance=0.1) -> bool:
+    def __planar(self, ring, tolerance=0.1) -> bool:
         if len(ring) < 3:
             return False
         
@@ -104,7 +120,7 @@ class ligand():
 
             cycles=nx.cycle_basis(G)
             for cycle in cycles:
-                if self.planar(cycle) and len(cycle) in [5,6]:
+                if self.__planar(cycle) and len(cycle) in [5,6]:
                     #self.__pi_sites.append(cycle)
 
                     coords = np.array([[self.atoms[atom_name].x, self.atoms[atom_name].y, self.atoms[atom_name].z] for atom_name in cycle])
@@ -325,11 +341,12 @@ class chain():
 
             return self.__bindingSurface
         
-    def detectHydrogenBonding (self, chainRange=-1) -> dict[str,dict[str,any]]:
+    def detectHydrogenBonding (self, maxBondDist=3.5, angleTolerance=96.0) -> dict[str,dict[str,any]]:
         if self.__got_h_bonds == False:
-            acceptorAtoms=['N','O','F','S','Se','Cl']
-            maxBondDist=3.5
-            angleTolerance= 96.0 # In degrees: for all angles which I measured incorrectly + bonding strength
+            #acceptorAtoms=['N','O','F','S','Se','Cl']
+            nonAcceptors=['C','H']
+            maxBondDist=maxBondDist
+            angleTolerance= angleTolerance # In degrees: for all angles which I measured incorrectly + bonding strength
             donors=pdbftk.hBondDonors
             refCarbons=pdbftk.refCarbons
             aproxAngles=pdbftk.aproxAngles
@@ -342,7 +359,7 @@ class chain():
                             continue
                         for ligand in self.ligands:
                             for atom1 in ligand.atoms:
-                                if ligand.atoms[atom1].element in acceptorAtoms:
+                                if not ligand.atoms[atom1].element in nonAcceptors:
                                     ligatom=ligand.atoms[atom1]
                                     distance=atomDist(chainatom,ligatom)
                                     if distance <= maxBondDist:
@@ -353,6 +370,7 @@ class chain():
                                         if(bondAngle >= idealAngle-angleTolerance and bondAngle <= idealAngle+angleTolerance):
                                             self.__ligand_hydrogen_bonds[str(chainatom.serial)+'|'+ligand.name] = {
                                                 'residue':chainatom.resSeq,
+                                                'ligand':ligand.name,
                                                 'atoms':(chainatom,ligatom),
                                                 'angle':bondAngle,
                                                 'distance':distance
@@ -365,33 +383,70 @@ class chain():
         if self.__got_pi_bonds == False:
             for res in self.residues:
                 if res.type in pdbftk.aa_pi_atoms:
-                    for centroid in res.pi_centroids:
+                    for rescentroid in res.pi_centroids:
                         for ligand in self.ligands:
                             for site in ligand.pi_sites():
-                                distance = euclidean_distance(centroid,site[0])
+                                distance = euclidean_distance(rescentroid,site[0])
                                 if distance < 6:
-                                    '''
-                                    print(centroid)
-                                    print(site[0])
-                                    angle = vector_angle(fit_plane(centroid), fit_plane(site[0]))
 
-                                    if angle > 30:
-                                        pi_type = 'Edge|Side'
-                                    else:
-                                        pi_type = 'Side|Side'
-                                    '''
-                                    self.__ligand_pi_interactions[f'{res.id}|{ligand.name}']={
-                                        'residue':res.id,
-                                        'atoms':site[1],
-                                        'distance':distance,
-                                        #'angle':angle,
-                                        #'type':pi_type,
-                                    }
+
+                                    resPlane=fit_plane([[res.atoms[atom_name].x, res.atoms[atom_name].y, res.atoms[atom_name].z] for atom_name in pdbftk.aa_pi_atoms[res.type][res.pi_centroids.index(rescentroid)]])
+                                    ligPlane=fit_plane([[ligand.atoms[atom_name].x, ligand.atoms[atom_name].y, ligand.atoms[atom_name].z] for atom_name in site[1]])
+
+
+                                    angle=vector_angle(resPlane[0],ligPlane[0])
+
+                                    if angle > 90.0:
+                                        angle = 180-angle
+                    
+                                    go = False
+
+                                    if angle > 30.0:
+                                        #print('PING')
+                                        res_to_lig = point_to_plane(rescentroid,ligPlane[0],ligPlane[1])
+                                        res_to_lig_hyp = float(np.sqrt(res_to_lig**2 + distance**2))
+                                        lig_to_res = point_to_plane(site[0],resPlane[0],resPlane[1])
+                                        lig_to_res_hyp = float(np.sqrt(lig_to_res**2 + distance**2))
+                                        
+                                        diffs = [float(np.abs(res_to_lig_hyp - distance)), float(np.abs(lig_to_res_hyp - distance))]
+                                        on_plane_ctr  = 0
+                                        for item in diffs:
+                                            if item > 0.5:
+                                                on_plane_ctr += 1
+                                        if on_plane_ctr == 1:
+                                            go = True
+                                       
+                                    if angle <= 30.0:
+                                        res_to_lig = point_to_plane(rescentroid,ligPlane[0],ligPlane[1])
+                                        lig_to_res = point_to_plane(site[0],resPlane[0],resPlane[1])
+                                        
+                                        if(res_to_lig > 2) and (lig_to_res > 2):
+                                            larger=max(res_to_lig,lig_to_res)
+                                            smaller=min(res_to_lig,lig_to_res)
+
+                                            if larger * 0.75 < smaller:
+                                                go = True
+
+                                    if go:
+                                        if angle <= 30.0:
+                                            stackType='face-face'
+                                        else:
+                                            stackType='edge-face'
+                                        self.__ligand_pi_interactions[f'{res.id}|{ligand.name}']={
+                                            'residue':res.id,
+                                            'restype':res.type,
+                                            'ligand':ligand.name,
+                                            'atoms':site[1],
+                                            'distance':distance,
+                                            'angle':angle,
+                                            'type':stackType
+                                        }
+                                        
             self.__got_pi_bonds = True
         return self.__ligand_pi_interactions
     
 
-    def ligandBonding(self):
+    def ligandBonding(self) -> dict[str,dict[str]]:
         return{
         'hydrogen':self.detectHydrogenBonding(),
         'pi':self.detectPiInteractions()
@@ -519,21 +574,23 @@ def findResOffset(chain:chain,MissingResCutoff=math.inf) -> int:
 
     alignment=alignments[0]
 
-    print(alignment)
-    #print(f"score: {alignment.score}")
-    #print(alignment[0])
+    #print(alignment)
+
     seqStart=False
     gapOffset=0
     mutations=[]
+    capNoise=0
     for res in range(len(can_seq)):
         align=alignment[0][res]
         if align == '-' and not seqStart:
             continue
-        if res < 200:
+        if res < 245:
+            if align != '-':
+                capNoise += 1
             continue
         
         if not seqStart:
-            firstRes=res
+            firstRes=res + 1
         seqStart = True
         if seqStart:
             if align == '-':
@@ -544,13 +601,10 @@ def findResOffset(chain:chain,MissingResCutoff=math.inf) -> int:
             break
     
 
-    index=int(chain.residues[0].id)
-    #print(index)
+    index=int(chain.residues[capNoise].id)
     baseOffset=firstRes-index
-    totalOffset= baseOffset+gapOffset
-    #print(f'Gap Offset: {gapOffset}')
-    #print(f'Base Offset: {baseOffset}')
-    print(f'Final Offset: {-totalOffset}')
+    totalOffset= baseOffset#+gapOffset
+
     return totalOffset
 
 def euclidean_distance(point1:list,point2:list):
@@ -562,21 +616,71 @@ def euclidean_distance(point1:list,point2:list):
 def fit_plane(points) -> np.ndarray:
     points=np.array(points)
     A = np.c_[points[:, 0], points[:, 1], np.ones(points.shape[0])]
+    b = points[:,2]
 
-    _, _, Vt = np.linalg.svd(A)
+    coeffs, _, _, _ = np.linalg.lstsq(A,b,rcond=None)
 
-    normal_vector = Vt[-1, :-1]
+    normal_vector=[float(coeffs[0]),float(coeffs[1])]
 
-    return normal_vector
+    d = coeffs[2]
+
+    return normal_vector, d
 
 def vector_angle(u:np.ndarray, v:np.ndarray) -> float:
 
+
     dot=np.dot(u,v)
     unorm=np.linalg.norm(u)
-    vnorm=np.linalg.norm(u)
+    vnorm=np.linalg.norm(v)
     
     cos_theta = dot / (unorm * vnorm)
-    cos_theta = np.clip(cos_theta,-1.0,1.0)
+    cos_theta=np.clip(cos_theta,-1.0,1.0)
+    
+    angle_rad=np.arccos(cos_theta)
 
-    theta=float(np.arccos(cos_theta))
-    return theta
+    angle_deg=np.degrees(angle_rad)
+    return angle_deg
+
+def point_to_plane(point,plane,d) -> float:
+    A, B = plane
+    x, y, z = point
+    distance=(np.abs(A * x + B * y - z + d)) / np.sqrt(A**2 + B**2 + 1)
+    #print(distance)
+    return(float(distance))
+
+def csvToList(csvPath:str):
+    cl=open(csvPath,'r')
+    lout=[]
+    for line in cl:
+        line=line.strip('\n').split(',')
+        if len(line) == 1:
+            line = line[0]
+        lout.append(line)
+    cl.close()
+    return lout
+
+def checkForExistingOutputFile(filePathName:str,wdir=wdir,rmOld=False):
+    i=1
+    while os.path.exists(wdir+filePathName):
+        filePathName=filePathName.split('(')[0].split('.csv')[0]+'('+str(i)+').csv'
+        i+=1
+    return(filePathName)
+
+
+'''
+def structures_to_csv(structures:dict[str,structureFile], fileName:str = 'PDBf-out') -> str
+    fileName=checkForExistingOutputFile(fileName)    
+    out=''
+    for structure_id in structures:
+        chains = structures[structure_id].chains
+        for chain_id in chains:
+            chain = chains[chain_id]
+            if chain.type() == 'NR':
+                out += f'{structures[structure_id].name},{chain.name},'
+                if chain_id in structures[structure_id].coregPairs:
+                    out += f'{chains[structures[structure_id].coregPairs[chain_id]].type()},'
+                else:
+                    out += ','
+                
+                if chain_i
+'''
