@@ -29,8 +29,6 @@ class structureFile:
     
         acceptedModes=['cif','mmcif','pdbx','pdb']
         fileExt=path.split('.')[len(path.split('.'))-1]
-        fileName=path.split('/')[len(path.split('/'))-1]
-        mode=''
         def readPDB():
             parser=PDBParser(QUIET=True)
             structure=parser.get_structure(self.filePath.split('/')[-1],self.filePath)
@@ -47,7 +45,7 @@ class structureFile:
                     self.chains[chainIndex] = chain(bio_chain.id,bio_chain)
 
         if fileExt not in acceptedModes:
-            raise ValueError('"'+path+'" is not a supported coordinate file type. Supported formats: '+str(acceptedModes).strip('[]'))
+            raise ValueError(f'"{path}" is not a supported coordinate file type. Supported formats: {str(acceptedModes).strip('[]')}')
         else:
             modeIndex=acceptedModes.index(fileExt)
             if modeIndex <=2:
@@ -278,8 +276,8 @@ class chain():
                 return None
             for clamp in distReq:
                 if not clamp in self.charge_clamps:
-                    print('Error: "'+clamp+'" is not a valid charge clamp.')
-                    print('Valid charge clamps: '+' '.join(self.charge_clamps))
+                    print(f'Error: "{clamp}" is not a valid charge clamp.')
+                    print(f'Valid charge clamps: {" ".join(self.charge_clamps)}')
                     return None
             if '|'.join(distReq) not in self.distances:
                 
@@ -368,7 +366,7 @@ class chain():
                                         idealAngle=aproxAngles[pdbftk.AminoacidDict[chainatom.resName]][chainatom.name]
 
                                         if(bondAngle >= idealAngle-angleTolerance and bondAngle <= idealAngle+angleTolerance):
-                                            self.__ligand_hydrogen_bonds[str(chainatom.serial)+'|'+ligand.name] = {
+                                            self.__ligand_hydrogen_bonds[f'{chainatom.serial}|{ligand.name}'] = {
                                                 'residue':chainatom.resSeq,
                                                 'ligand':ligand.name,
                                                 'atoms':(chainatom,ligatom),
@@ -388,17 +386,28 @@ class chain():
                             for site in ligand.pi_sites():
                                 distance = euclidean_distance(rescentroid,site[0])
                                 if distance < 6:
-
+                                    #'''
+                                    #g=[res.atoms[atom_name].x, res.atoms[atom_name].y, res.atoms[atom_name].z] for atom_name in pdbftk.aa_pi_atoms[res.type][res.pi_centroids.index(rescentroid)]
+                                    #print(res.type,res.id)
+                                    #print(pdbftk.aa_pi_atoms[res.type][res.pi_centroids.index(rescentroid)])
+                                    #print(site[1])
+                                    #print([[res.atoms[atom_name].x, res.atoms[atom_name].y, res.atoms[atom_name].z] for atom_name in pdbftk.aa_pi_atoms[res.type][res.pi_centroids.index(rescentroid)]])
+                                    #print([[ligand.atoms[atom_name].x, ligand.atoms[atom_name].y, ligand.atoms[atom_name].z] for atom_name in site[1]])
 
                                     resPlane=fit_plane([[res.atoms[atom_name].x, res.atoms[atom_name].y, res.atoms[atom_name].z] for atom_name in pdbftk.aa_pi_atoms[res.type][res.pi_centroids.index(rescentroid)]])
                                     ligPlane=fit_plane([[ligand.atoms[atom_name].x, ligand.atoms[atom_name].y, ligand.atoms[atom_name].z] for atom_name in site[1]])
 
+                                    #print(resPlane[0])
+                                    #print(ligPlane[0])
 
                                     angle=vector_angle(resPlane[0],ligPlane[0])
-
+                                    #print(angle)
+                                    #print()
+                                    #print(rescentroid)
+                                    #print(angle)
                                     if angle > 90.0:
                                         angle = 180-angle
-                    
+                                    #print(angle)
                                     go = False
 
                                     if angle > 30.0:
@@ -475,7 +484,7 @@ def getPDBs(fileList:list, cachePath=wdir+'pdbCache/', cache=True, dlFrmPDB=True
         if not os.path.exists(cachePath+file):
             if dlFrmPDB and len(file.split('.')[0]) == 4:
                 try:
-                    url='https://files.rcsb.org/download/'+rawFile
+                    url=f'https://files.rcsb.org/download/{rawFile}'
                     urllib.request.urlretrieve(url,cachePath+rawFile)
                     if rawFile.endswith('.gz'):
                         gzipped=gzip.open(cachePath+rawFile,'r')
@@ -489,7 +498,7 @@ def getPDBs(fileList:list, cachePath=wdir+'pdbCache/', cache=True, dlFrmPDB=True
                     if os.path.exists(wdir+file):
                         shutil.copyfile(wdir+file,cachePath+file)
                     else:
-                        raise ValueError('FILE "'+file+'" DOES NOT EXIST')
+                        raise ValueError(f'FILE "{file}" DOES NOT EXIST')
         filePaths[file] = cachePath+file
 
     return filePaths
@@ -575,7 +584,8 @@ def findResOffset(chain:chain,MissingResCutoff=math.inf) -> int:
     alignment=alignments[0]
 
     #print(alignment)
-
+    #print(f"score: {alignment.score}")
+    #print(alignment[0])
     seqStart=False
     gapOffset=0
     mutations=[]
@@ -584,7 +594,7 @@ def findResOffset(chain:chain,MissingResCutoff=math.inf) -> int:
         align=alignment[0][res]
         if align == '-' and not seqStart:
             continue
-        if res < 245:
+        if res < pdbftk.LBD_start[chain.type()]:
             if align != '-':
                 capNoise += 1
             continue
@@ -602,9 +612,14 @@ def findResOffset(chain:chain,MissingResCutoff=math.inf) -> int:
     
 
     index=int(chain.residues[capNoise].id)
+    #print(f'index: {index}')
+    #print(f'first residue: {firstRes}')
+    #print(f'cap noise: {capNoise}')
     baseOffset=firstRes-index
     totalOffset= baseOffset#+gapOffset
-
+    #print(f'Gap Offset: {gapOffset}')
+    #print(f'Base Offset: {baseOffset}')
+    #print(f'Final Offset: {-totalOffset}')
     return totalOffset
 
 def euclidean_distance(point1:list,point2:list):
